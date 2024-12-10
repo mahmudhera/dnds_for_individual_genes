@@ -2,6 +2,90 @@ from Bio import SeqIO
 from Bio.Seq import Seq
 import random
 from matplotlib import pyplot as plt
+from itertools import product
+import functools
+
+
+from calculate_kaks_by_kakscalculator2 import compute_kaks_ng
+
+
+
+# Genetic code dictionary
+GENETIC_CODE = {
+    'TTT': 'F', 'TTC': 'F', 'TTA': 'L', 'TTG': 'L',
+    'CTT': 'L', 'CTC': 'L', 'CTA': 'L', 'CTG': 'L',
+    'ATT': 'I', 'ATC': 'I', 'ATA': 'I', 'ATG': 'M',
+    'GTT': 'V', 'GTC': 'V', 'GTA': 'V', 'GTG': 'V',
+    'TCT': 'S', 'TCC': 'S', 'TCA': 'S', 'TCG': 'S',
+    'CCT': 'P', 'CCC': 'P', 'CCA': 'P', 'CCG': 'P',
+    'ACT': 'T', 'ACC': 'T', 'ACA': 'T', 'ACG': 'T',
+    'GCT': 'A', 'GCC': 'A', 'GCA': 'A', 'GCG': 'A',
+    'TAT': 'Y', 'TAC': 'Y', 'TAA': '*', 'TAG': '*',
+    'CAT': 'H', 'CAC': 'H', 'CAA': 'Q', 'CAG': 'Q',
+    'AAT': 'N', 'AAC': 'N', 'AAA': 'K', 'AAG': 'K',
+    'GAT': 'D', 'GAC': 'D', 'GAA': 'E', 'GAG': 'E',
+    'TGT': 'C', 'TGC': 'C', 'TGA': '*', 'TGG': 'W',
+    'CGT': 'R', 'CGC': 'R', 'CGA': 'R', 'CGG': 'R',
+    'AGT': 'S', 'AGC': 'S', 'AGA': 'R', 'AGG': 'R',
+    'GGT': 'G', 'GGC': 'G', 'GGA': 'G', 'GGG': 'G'
+}
+
+@functools.cache
+def count_synonymous_nonsynonymous_sites(codon):
+    """
+    Calculate the number of synonymous and nonsynonymous sites for a given codon.
+
+    Args:
+        codon (str): A three-letter string representing a codon (e.g., 'ATG').
+
+    Returns:
+        tuple: (synonymous_sites, nonsynonymous_sites)
+    """
+    if len(codon) != 3 or not all(base in 'ATGC' for base in codon):
+        raise ValueError("Input must be a valid codon (3 letters, A/T/G/C).")
+
+    synonymous_count = 0
+    nonsynonymous_count = 0
+
+    for i in range(3):  # Iterate over each nucleotide position
+        for nucleotide in 'ATGC':
+            if nucleotide == codon[i]:
+                continue  # Skip the original nucleotide
+            mutated_codon = list(codon)
+            mutated_codon[i] = nucleotide
+            mutated_codon = ''.join(mutated_codon)
+            
+            # Determine the type of substitution
+            if GENETIC_CODE[mutated_codon] == GENETIC_CODE[codon]:
+                synonymous_count += 1
+            else:
+                nonsynonymous_count += 1
+
+    # Normalize by 3 positions
+    synonymous_sites = synonymous_count / 3.0
+    nonsynonymous_sites = nonsynonymous_count / 3.0
+
+    return synonymous_sites, nonsynonymous_sites
+
+
+def count_total_syn_nsyn_sites(nt_seq):
+    if len(nt_seq) % 3 != 0:
+        raise ValueError("Input must be a valid nucleotide sequence (multiple of 3 letters).")
+    
+    total_syn_sites = 0
+    total_nsyn_sites = 0
+    for i in range(0, len(nt_seq), 3):
+        codon = nt_seq[i:i+3]
+        if codon not in GENETIC_CODE:
+            raise ValueError(f"Invalid codon found: {codon}")
+        
+        syn_sites, nsyn_sites = count_synonymous_nonsynonymous_sites(codon)
+        total_syn_sites += syn_sites
+        total_nsyn_sites += nsyn_sites
+
+    return total_syn_sites, total_nsyn_sites
+
+
 
 """
 This fn will randomly mutate the input string with a given mutation rate.
@@ -60,26 +144,31 @@ def get_mutation_rate_from_containment(containment_index, k):
     return 1.0 - (containment_index)**(1/k)
 
 
-
-def determine_correct_dnds(dna_seq1, dna_seq2, aa_seq1, aa_seq2):
+def count_syn_nsyn_mutations(dna_seq1, dna_seq2, aa_seq1, aa_seq2):
     num_total_mutations = 0
+    num_syn_mutations = 0
     num_non_syn_mutations = 0
     for i in range(len(dna_seq1)):
         if dna_seq1[i] != dna_seq2[i]:
             num_total_mutations += 1
             codon_index = i//3
-            if aa_seq1[codon_index] != aa_seq2[codon_index]:
+            if aa_seq1[codon_index] == aa_seq2[codon_index]:
+                num_syn_mutations += 1
+            else:
                 num_non_syn_mutations += 1
-    
-    if num_total_mutations == num_non_syn_mutations:
-        if num_total_mutations == 0:
-            print('No mutations! Identical.')
-            return -1
-        else:
-            # all mutations are nonsynonymous
-            return float('Infinity')
 
-    return 1.0 * num_non_syn_mutations / (num_total_mutations-num_non_syn_mutations)
+    return num_syn_mutations, num_non_syn_mutations
+
+
+def determine_correct_dnds(dna_seq1, dna_seq2, aa_seq1, aa_seq2):
+    num_syn_mutations, num_non_syn_mutations = count_syn_nsyn_mutations(dna_seq1, dna_seq2, aa_seq1, aa_seq2)
+    num_syn_sites, num_non_syn_sites = count_total_syn_nsyn_sites(dna_seq1)
+    try:
+        ret_val = (1.0*num_non_syn_mutations/num_non_syn_sites) / (1.0*num_syn_mutations/num_syn_sites)
+    except ZeroDivisionError:
+        ret_val = 200
+
+    return ret_val
 
 
 
@@ -94,6 +183,7 @@ def simulate_and_plot(gene_name, nt_seq, aa_seq, ksize_nt, ksize_aa, mutation_ra
 
     dnds_est_list = []
     dnds_correct_list = []
+    dnds_using_tool_list = []
 
     for i in range(num_simulations):
         mutated_nt_seq = Seq(mutate_string(str(nt_seq), mutation_rate))
@@ -113,20 +203,27 @@ def simulate_and_plot(gene_name, nt_seq, aa_seq, ksize_nt, ksize_aa, mutation_ra
             dnds_est = aa_mutation_rate/( 1.0 - aa_mutation_rate - (1-nt_mutation_rate)**3 )
         except ZeroDivisionError:
             dnds_est = 200
+
+        num_syn_sites, num_nsyn_sites = count_total_syn_nsyn_sites(orig_nt_seq)
+        dnds_est = dnds_est * num_syn_sites / num_nsyn_sites
+        
         dnds_correct = determine_correct_dnds(orig_nt_seq, mutated_nt_seq, orig_aa_seq, mutated_aa_seq)
+        dnds_using_tool = compute_kaks_ng(orig_nt_seq, mutated_nt_seq)[2]
         
         dnds_est_list.append(dnds_est)
         dnds_correct_list.append(dnds_correct)
+        dnds_using_tool_list.append(dnds_using_tool)
 
-    low, high = -1, 40
+    low, high = 0, 5
 
     plt.cla()
     plt.xlim(low, high)
     plt.ylim(low, high)
     plt.plot([low, high], [low, high], color='red', alpha=0.5, linestyle='--')
-    plt.scatter(dnds_correct_list, dnds_est_list, alpha=0.5)
-    plt.xlabel('Correct dN/dS')
-    plt.ylabel('Estimated dN/dS')
+    plt.scatter(dnds_using_tool_list, dnds_est_list, alpha=0.5)
+    plt.xlabel('Correct dN/dS by KaKs_calculator')
+    #plt.ylabel('Correct dN/dS by my calculation')
+    plt.ylabel('Estimated dN/dS by our estimator')
     # title using gene name, ksize, and mutation rate
     plt.title(gene_name + ' ksize_nt=' + str(ksize_nt) + ' mutation_rate=' + str(mutation_rate))
     
@@ -144,10 +241,7 @@ def main():
     random.seed(0)
 
     genes_filename = "genes.fasta"
-    mutation_rate = 0.01
-    num_simulations = 2000
-    ksize_nt = 45
-    ksize_aa = ksize_nt//3
+    num_simulations = 1000
 
     genes_to_nt_seqs =  {}
     genes_to_aa_seqs = {}
@@ -161,8 +255,10 @@ def main():
             genes_to_aa_seqs[gene_name] = record.seq
 
     for gene_name, nt_seq in genes_to_nt_seqs.items():
-        for ksize_nt in [33, 39, 45, 51]:
-            for mutation_rate in [0.005, 0.01, 0.05]:
+        print('Working on gene:', gene_name)
+        print(count_total_syn_nsyn_sites(nt_seq))
+        for ksize_nt in [39, 45]:
+            for mutation_rate in [0.005, 0.01]:
                 simulate_and_plot(gene_name, nt_seq, genes_to_aa_seqs[gene_name], ksize_nt, ksize_nt//3, mutation_rate, num_simulations)
                 print('Done with gene:', gene_name, 'ksize:', ksize_nt, 'mutation_rate:', mutation_rate)
         
